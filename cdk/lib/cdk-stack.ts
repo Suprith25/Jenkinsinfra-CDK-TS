@@ -1,6 +1,8 @@
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import { Construct } from 'constructs';
+import * as path from 'path';
+import { readFileSync } from 'fs';
 
 export class CdkStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -27,6 +29,55 @@ export class CdkStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'PublicSubnetIds', {
       value: cdk.Fn.join(',', vpc.publicSubnets.map((subnet) => subnet.subnetId)),
       description: 'Comma-separated IDs of the public subnets',
+    });
+
+    const sshPublicKey = new cdk.CfnParameter(this, 'SshPublicKey', {
+      type: 'String',
+      description: 'Your SSH public key (for example, the contents of ~/.ssh/jenkins-practice.pub)',
+      minLength: 1,
+    });
+
+    const keyPair = new ec2.KeyPair(this, 'JenkinsKeyPair', {
+      publicKeyMaterial: sshPublicKey.valueAsString,
+    });
+
+    const jenkinsSecurityGroup = new ec2.SecurityGroup(this, 'JenkinsSecurityGroup', {
+      vpc,
+      description: 'Allow SSH and Jenkins web access',
+      allowAllOutbound: true,
+    });
+    jenkinsSecurityGroup.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(22), 'SSH');
+    jenkinsSecurityGroup.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(8080), 'Jenkins web interface');
+
+    const userData = ec2.UserData.custom(
+      readFileSync(path.join(__dirname, '..', 'user-data', 'install-jenkins.sh'), 'utf8'),
+    );
+
+    const jenkinsInstance = new ec2.Instance(this, 'JenkinsInstance', {
+      vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO),
+      machineImage: ec2.MachineImage.resolveSsmParameterAtLaunch(
+        '/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id',
+      ),
+      keyPair,
+      securityGroup: jenkinsSecurityGroup,
+      userData,
+    });
+
+    new cdk.CfnOutput(this, 'JenkinsInstanceId', {
+      value: jenkinsInstance.instanceId,
+      description: 'ID of the Jenkins EC2 instance',
+    });
+
+    new cdk.CfnOutput(this, 'JenkinsPublicIp', {
+      value: jenkinsInstance.instancePublicIp,
+      description: 'Public IP address of the Jenkins EC2 instance',
+    });
+
+    new cdk.CfnOutput(this, 'JenkinsUrl', {
+      value: `http://${jenkinsInstance.instancePublicIp}:8080`,
+      description: 'URL of the Jenkins web interface',
     });
   }
 }
