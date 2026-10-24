@@ -4,9 +4,9 @@ This repository is intended to build Jenkins infrastructure on AWS using
 AWS CDK and TypeScript. The infrastructure is being developed in stages so
 that the network, compute, and Jenkins installation can be reviewed separately.
 
-> **Current status:** only the networking foundation is implemented. This
-> project does not yet create EC2 instances, install Jenkins, or configure a
-> Jenkins controller and agents.
+> **Current status:** the project creates the networking foundation and one
+> practice Jenkins EC2 instance. It does not create the two planned agent
+> instances or configure Jenkins agents.
 
 ## What is included now
 
@@ -15,7 +15,12 @@ The `CdkStack` stack creates:
 - One VPC with CIDR `10.0.0.0/27` spanning two Availability Zones.
 - One public `/28` subnet in each Availability Zone.
 - An Internet Gateway and public default routes.
-- No NAT Gateways, EC2 instances, or Jenkins installation.
+- No NAT Gateways.
+- One `t3.micro` EC2 instance running Ubuntu Server 24.04 LTS.
+- EC2 user data installs Java 21 (a Jenkins runtime dependency) and Jenkins
+  using Ubuntu's `apt` package manager.
+- Inbound SSH (port 22) and Jenkins web access (port 8080) from any IPv4
+  address, as configured for this practice setup.
 - CloudFormation outputs for the VPC ID and comma-separated public subnet IDs.
 
 The small CIDR allocation is intended for the planned practice setup of one
@@ -25,10 +30,17 @@ is the smallest IPv4 subnet size AWS supports. This compact layout leaves
 limited room for additional resources, so revisit the CIDR sizes before adding
 load balancers, interface endpoints, or more instances.
 
-The subnets are public to avoid NAT Gateway charges. Instances launched into
-them can receive public IPv4 addresses. The current stack does not open SSH or
-Jenkins ports, but future instance security groups must restrict access
-carefully. Do not expose SSH or the Jenkins web interface to the whole internet.
+The subnets are public to avoid NAT Gateway charges. The instance receives a
+public IPv4 address. **For this practice setup, SSH and Jenkins port 8080 are
+open to the entire IPv4 internet (`0.0.0.0/0`). This is risky.** Use only a
+temporary practice instance, keep its SSH private key secure, and change the
+security-group rules to your own IP before using it for real work. Do not use
+this public access configuration for production.
+
+The `t3.micro` type is a small practice size, not a guarantee of free usage.
+Free-tier eligibility and charges depend on account age, region, usage, and
+AWS's current pricing terms. Jenkins can also be memory-constrained on a
+micro instance.
 
 ## Repository layout
 
@@ -39,6 +51,7 @@ carefully. Do not expose SSH or the Jenkins web interface to the whole internet.
     ├── bin/cdk.ts
     ├── lib/cdk-stack.ts
     ├── test/cdk.test.ts
+    ├── user-data/install-jenkins.sh
     ├── cdk.json
     ├── cdk.context.json
     ├── package.json
@@ -65,13 +78,18 @@ carefully. Do not expose SSH or the Jenkins web interface to the whole internet.
   This is why deployment commands use `AWS_PROFILE=jenkins-infra`.
 - **`cdk/lib/cdk-stack.ts`** — The infrastructure definition. This is the main
   file to read when learning how the AWS resources are created. It declares a
-  VPC with two public subnets in two Availability Zones, disables NAT Gateways,
-  and exports the VPC and subnet IDs as CloudFormation outputs. Future
-  networking, EC2, and Jenkins resources will be added here or in constructs
-  called from this stack.
+  VPC with two public subnets in two Availability Zones, a security group, an
+  SSH key-pair resource based on a public-key deployment parameter, one EC2
+  instance, and CloudFormation outputs. The EC2 instance uses the install
+  script under `cdk/user-data/`.
+- **`cdk/user-data/install-jenkins.sh`** — The Ubuntu user-data script executed
+  when the EC2 instance first boots. It installs Java 21 and Jenkins from the
+  Jenkins Debian stable repository, then enables and starts the Jenkins service.
+  The private SSH key is not part of this file or repository.
 - **`cdk/test/cdk.test.ts`** — CDK template tests. The test synthesizes the
-  stack in memory and checks resource counts and key properties. These tests
-  validate what CDK intends to deploy; they do not create AWS resources.
+  stack in memory and checks resource counts and key properties, including the
+  instance type, user data, and security-group ingress. These tests validate
+  what CDK intends to deploy; they do not create AWS resources.
 
 ### CDK and TypeScript configuration
 
@@ -171,7 +189,7 @@ AWS_PROFILE=jenkins-infra npx cdk synth
 ```
 
 `npm test` checks that the synthesized template contains the expected VPC,
-subnets, Internet Gateway, and routes, and no NAT Gateway or EC2 instance.
+subnets, Internet Gateway, routes, EC2 instance, user data, and security rules.
 `cdk synth` generates the CloudFormation template locally; it does not deploy
 resources.
 
@@ -186,16 +204,31 @@ first deployment there:
 AWS_PROFILE=jenkins-infra npx cdk bootstrap
 ```
 
-Then review and deploy the networking stack:
+Review the planned changes:
 
 ```sh
 AWS_PROFILE=jenkins-infra npx cdk diff CdkStack
-AWS_PROFILE=jenkins-infra npx cdk deploy CdkStack
+```
+
+Create an ED25519 SSH key pair locally if you do not already have one for this
+practice instance. The private key stays on your computer; only the `.pub`
+public key is passed to CDK:
+
+```sh
+ssh-keygen -t ed25519 -f ~/.ssh/jenkins-practice -C "jenkins-practice"
+```
+
+Deploy the stack and provide your public key as a CloudFormation parameter:
+
+```sh
+AWS_PROFILE=jenkins-infra npx cdk deploy CdkStack \
+  --parameters CdkStack:SshPublicKey="$(cat ~/.ssh/jenkins-practice.pub)"
 ```
 
 CDK displays the proposed changes and asks for confirmation by default. Review
-the account, region, and resources before approving. The stack outputs the VPC
-ID and public subnet IDs after deployment. You can also inspect them with:
+the account, region, public inbound rules, and resources before approving. The
+stack outputs VPC/subnet IDs and the instance ID, public IP, and Jenkins URL.
+Inspect them with:
 
 ```sh
 AWS_PROFILE=jenkins-infra aws cloudformation describe-stacks \
@@ -203,6 +236,23 @@ AWS_PROFILE=jenkins-infra aws cloudformation describe-stacks \
   --query 'Stacks[0].[StackStatus,Outputs]' \
   --output table
 ```
+
+Wait for instance initialization to finish before opening the Jenkins URL.
+Connect over SSH with the private key:
+
+```sh
+ssh -i ~/.ssh/jenkins-practice ubuntu@PUBLIC_IP
+```
+
+Replace `PUBLIC_IP` with the `JenkinsPublicIp` output. Retrieve the initial
+administrator password on the instance:
+
+```sh
+sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+```
+
+Open the `JenkinsUrl` output in your browser and enter that password to finish
+the Jenkins setup wizard.
 
 ## Remove deployed resources
 
@@ -221,17 +271,18 @@ environment.
 
 ## Planned stages
 
-The intended next stages are to add EC2 compute and then add the scripts and
-configuration to install Jenkins. The overall goal is a Jenkins controller
-(master) and two agent nodes (slaves). These components are **not implemented**
-or deployed by the current code.
+The next stage is to add two Jenkins agent instances and configure them to
+connect to the controller. The current stack creates only the controller.
 
 ## Cost and security notes
 
-- The current stack creates no EC2 instances and has no NAT Gateway.
+- The stack creates one EC2 instance and has no NAT Gateway. EC2, EBS, data
+  transfer, and public IPv4 charges may apply even if the instance type is
+  described as free-tier eligible.
 - AWS may charge for resources or related services; review current AWS pricing
   and your account's billing dashboard before deploying.
-- Public subnets have internet routes. Public IPv4 addresses on future instances
-  can incur AWS charges.
+- This practice stack intentionally exposes SSH and Jenkins 8080 to all IPv4
+  addresses. Restrict both ingress rules to a trusted IP before using it beyond
+  a temporary personal exercise.
 - Keep credentials outside source control. Use least-privilege AWS permissions.
 - Review the synthesized template and CDK deployment diff before deploying.
