@@ -12,17 +12,23 @@ that the network, compute, and Jenkins installation can be reviewed separately.
 
 The `CdkStack` stack creates:
 
-- One VPC with two Availability Zones.
-- One public subnet in each Availability Zone. Each subnet uses a `/24` CIDR.
+- One VPC with CIDR `10.0.0.0/27` spanning two Availability Zones.
+- One public `/28` subnet in each Availability Zone.
 - An Internet Gateway and public default routes.
 - No NAT Gateways, EC2 instances, or Jenkins installation.
 - CloudFormation outputs for the VPC ID and comma-separated public subnet IDs.
 
-The subnet configuration is public-only to avoid NAT Gateway charges. Instances
-launched into these subnets in a future stage can receive public IPv4 addresses.
-The current stack does not open SSH or Jenkins ports, but future instance
-security groups must restrict access carefully. Do not expose SSH or the Jenkins
-web interface to the whole internet.
+The small CIDR allocation is intended for the planned practice setup of one
+Jenkins controller and two agents. Each `/28` subnet contains 16 IPv4 addresses;
+AWS reserves five in each subnet, leaving 11 usable addresses per subnet. `/28`
+is the smallest IPv4 subnet size AWS supports. This compact layout leaves
+limited room for additional resources, so revisit the CIDR sizes before adding
+load balancers, interface endpoints, or more instances.
+
+The subnets are public to avoid NAT Gateway charges. Instances launched into
+them can receive public IPv4 addresses. The current stack does not open SSH or
+Jenkins ports, but future instance security groups must restrict access
+carefully. Do not expose SSH or the Jenkins web interface to the whole internet.
 
 ## Repository layout
 

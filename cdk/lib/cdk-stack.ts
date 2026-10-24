@@ -7,13 +7,14 @@ export class CdkStack extends cdk.Stack {
     super(scope, id, props);
 
     const vpc = new ec2.Vpc(this, 'JenkinsVpc', {
+      ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/27'),
       maxAzs: 2,
       natGateways: 0,
       subnetConfiguration: [
         {
           name: 'Public',
           subnetType: ec2.SubnetType.PUBLIC,
-          cidrMask: 24,
+          cidrMask: 28,
         },
       ],
     });

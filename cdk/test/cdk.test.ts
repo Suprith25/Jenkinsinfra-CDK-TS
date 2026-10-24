@@ -14,6 +14,14 @@ test('creates a two-AZ public VPC without NAT gateways', () => {
   template.resourceCountIs('AWS::EC2::Instance', 0);
   template.resourceCountIs('AWS::EC2::Route', 2);
 
+  template.hasResourceProperties('AWS::EC2::VPC', {
+    CidrBlock: '10.0.0.0/27',
+  });
+
+  template.resourcePropertiesCountIs('AWS::EC2::Subnet', {
+    CidrBlock: Match.stringLikeRegexp('/28$'),
+  }, 2);
+
   template.hasResourceProperties('AWS::EC2::Subnet', {
     MapPublicIpOnLaunch: true,
   });
