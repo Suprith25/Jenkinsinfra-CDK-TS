@@ -37,7 +37,7 @@ test('creates the public VPC and one Jenkins EC2 instance', () => {
     ImageId: Match.stringLikeRegexp('resolve:ssm:/aws/service/canonical/ubuntu/server/24\\.04'),
     UserData: {
       'Fn::Base64': Match.stringLikeRegexp(
-        'apt-get install -y ca-certificates curl fontconfig openjdk-21-jre[\\s\\S]*apt-get install -y jenkins[\\s\\S]*systemctl enable --now jenkins',
+        'fallocate -l 2G /swapfile[\\s\\S]*swapon /swapfile[\\s\\S]*apt-get install -y ca-certificates curl fontconfig openjdk-21-jre[\\s\\S]*apt-get install -y jenkins[\\s\\S]*systemctl enable --now jenkins',
       ),
     },
   });
