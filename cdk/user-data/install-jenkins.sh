@@ -3,6 +3,16 @@ set -euxo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 
+# t3.micro has only 1 GiB of RAM, so add 2 GiB of swap to keep Jenkins from
+# being killed by the out-of-memory killer.
+if ! swapon --show | grep -q '/swapfile'; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
 apt-get update
 apt-get install -y ca-certificates curl fontconfig openjdk-21-jre
 
