@@ -65,6 +65,38 @@ export class CdkStack extends cdk.Stack {
       userData,
     });
 
+    const agentSecurityGroup = new ec2.SecurityGroup(this, 'JenkinsAgentSecurityGroup', {
+      vpc,
+      description: 'Allow SSH from the Jenkins controller only',
+      allowAllOutbound: true,
+    });
+    agentSecurityGroup.addIngressRule(
+      jenkinsSecurityGroup,
+      ec2.Port.tcp(22),
+      'SSH from Jenkins controller',
+    );
+
+    const agentUserData = readFileSync(path.join(__dirname, '..', 'user-data', 'install-agent.sh'), 'utf8');
+
+    ['1', '2'].forEach((agentNumber, index) => {
+      const agentInstance = new ec2.Instance(this, `JenkinsAgent${agentNumber}`, {
+        vpc,
+        vpcSubnets: { subnets: [vpc.publicSubnets[index % vpc.publicSubnets.length]] },
+        instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO),
+        machineImage: ec2.MachineImage.resolveSsmParameterAtLaunch(
+          '/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id',
+        ),
+        keyPair,
+        securityGroup: agentSecurityGroup,
+        userData: ec2.UserData.custom(agentUserData),
+      });
+
+      new cdk.CfnOutput(this, `JenkinsAgent${agentNumber}PrivateIp`, {
+        value: agentInstance.instancePrivateIp,
+        description: `Private IP of Jenkins agent ${agentNumber} (use this in the Jenkins node config)`,
+      });
+    });
+
     new cdk.CfnOutput(this, 'JenkinsInstanceId', {
       value: jenkinsInstance.instanceId,
       description: 'ID of the Jenkins EC2 instance',

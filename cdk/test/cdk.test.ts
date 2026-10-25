@@ -2,7 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import * as Cdk from '../lib/cdk-stack';
 
-test('creates the public VPC and one Jenkins EC2 instance', () => {
+test('creates the public VPC, one Jenkins controller and two agents', () => {
   const app = new cdk.App();
   const stack = new Cdk.CdkStack(app, 'MyTestStack');
   const template = Template.fromStack(stack);
@@ -11,7 +11,7 @@ test('creates the public VPC and one Jenkins EC2 instance', () => {
   template.resourceCountIs('AWS::EC2::Subnet', 2);
   template.resourceCountIs('AWS::EC2::InternetGateway', 1);
   template.resourceCountIs('AWS::EC2::NatGateway', 0);
-  template.resourceCountIs('AWS::EC2::Instance', 1);
+  template.resourceCountIs('AWS::EC2::Instance', 3);
   template.resourceCountIs('AWS::EC2::Route', 2);
 
   template.hasResourceProperties('AWS::EC2::VPC', {
@@ -57,6 +57,14 @@ test('creates the public VPC and one Jenkins EC2 instance', () => {
         IpProtocol: 'tcp',
       }),
     ]),
+  });
+
+  template.resourceCountIs('AWS::EC2::SecurityGroup', 2);
+  template.hasResourceProperties('AWS::EC2::SecurityGroupIngress', {
+    IpProtocol: 'tcp',
+    FromPort: 22,
+    ToPort: 22,
+    SourceSecurityGroupId: Match.anyValue(),
   });
 
   template.resourceCountIs('AWS::EC2::KeyPair', 1);
