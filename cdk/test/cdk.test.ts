@@ -35,23 +35,27 @@ test('creates the public VPC, one Jenkins controller and two agents', () => {
     InstanceType: 't3.micro',
     KeyName: Match.anyValue(),
     ImageId: Match.stringLikeRegexp('resolve:ssm:/aws/service/canonical/ubuntu/server/24\\.04'),
-    UserData: {
-      'Fn::Base64': Match.stringLikeRegexp(
-        'fallocate -l 2G /swapfile[\\s\\S]*swapon /swapfile[\\s\\S]*apt-get install -y ca-certificates curl fontconfig openjdk-21-jre[\\s\\S]*apt-get install -y jenkins[\\s\\S]*systemctl enable --now jenkins',
-      ),
-    },
   });
+
+  const userData = Object.values(template.findResources('AWS::EC2::Instance'))
+    .map((instance) => JSON.stringify(instance.Properties.UserData));
+  const withJenkins = userData.filter((data) => data.includes('apt-get install -y jenkins'));
+  expect(withJenkins).toHaveLength(1);
+  expect(withJenkins[0]).toMatch(
+    /fallocate -l 2G \/swapfile[\s\S]*openjdk-21-jre[\s\S]*apt-get install -y jenkins[\s\S]*configuration-as-code[\s\S]*systemctl enable --now jenkins/,
+  );
+  expect(userData.filter((data) => data.includes('install -y ca-certificates fontconfig git openjdk-21-jre'))).toHaveLength(2);
 
   template.hasResourceProperties('AWS::EC2::SecurityGroup', {
     SecurityGroupIngress: Match.arrayWith([
       Match.objectLike({
-        CidrIp: '0.0.0.0/0',
+        CidrIp: { Ref: 'AllowedCidr' },
         FromPort: 22,
         ToPort: 22,
         IpProtocol: 'tcp',
       }),
       Match.objectLike({
-        CidrIp: '0.0.0.0/0',
+        CidrIp: { Ref: 'AllowedCidr' },
         FromPort: 8080,
         ToPort: 8080,
         IpProtocol: 'tcp',
@@ -67,5 +71,54 @@ test('creates the public VPC, one Jenkins controller and two agents', () => {
     SourceSecurityGroupId: Match.anyValue(),
   });
 
-  template.resourceCountIs('AWS::EC2::KeyPair', 1);
+  template.resourceCountIs('AWS::EC2::KeyPair', 2);
+});
+
+test('does not open any port to the whole internet', () => {
+  const template = Template.fromStack(new Cdk.CdkStack(new cdk.App(), 'MyTestStack'));
+  const groups = template.findResources('AWS::EC2::SecurityGroup');
+  for (const group of Object.values(groups)) {
+    for (const rule of group.Properties.SecurityGroupIngress ?? []) {
+      expect(rule.CidrIp).not.toBe('0.0.0.0/0');
+    }
+  }
+});
+
+test('requires an AllowedCidr in CIDR notation', () => {
+  const template = Template.fromStack(new Cdk.CdkStack(new cdk.App(), 'MyTestStack'));
+  const pattern = new RegExp(template.toJSON().Parameters.AllowedCidr.AllowedPattern);
+  expect(pattern.test('203.0.113.5/32')).toBe(true);
+  expect(pattern.test('0.0.0.0/0')).toBe(true);
+  expect(pattern.test('203.0.113.5')).toBe(false);
+  expect(pattern.test('203.0.113.5/33')).toBe(false);
+});
+
+test('spreads agents across Availability Zones and honours agentCount', () => {
+  const template = Template.fromStack(
+    new Cdk.CdkStack(new cdk.App(), 'MyTestStack', { agentCount: 3 }),
+  );
+  template.resourceCountIs('AWS::EC2::Instance', 4);
+
+  const subnets = Object.values(template.findResources('AWS::EC2::Instance')).map(
+    (instance) => JSON.stringify(instance.Properties.SubnetId),
+  );
+  expect(new Set(subnets).size).toBe(2);
+});
+
+test('controller configures Jenkins through JCasC with secrets from AWS', () => {
+  const template = Template.fromStack(new Cdk.CdkStack(new cdk.App(), 'MyTestStack'));
+
+  template.resourceCountIs('AWS::SecretsManager::Secret', 1);
+  template.hasResourceProperties('AWS::IAM::Policy', {
+    PolicyDocument: {
+      Statement: Match.arrayWith([
+        Match.objectLike({
+          Action: ['secretsmanager:GetSecretValue', 'secretsmanager:DescribeSecret'],
+          Effect: 'Allow',
+        }),
+        Match.objectLike({ Action: Match.arrayWith(['ssm:GetParameter']), Effect: 'Allow' }),
+      ]),
+    },
+  });
+  template.hasOutput('AdminPasswordCommand', {});
 });
